@@ -1,0 +1,578 @@
+---
+title: "Illustrating simulation results"
+author: "Theo Stolz"
+date: "`r Sys.Date()`"
+format: html
+editor: visual
+---
+
+This document covers the plot creation of simulations comparing methods of univariate T-tests on amplitude and multivariate MANOVA on amplitude and gradient in achieving more accurate onset estimation of EEG event-related potentials (ERPs).
+
+# Dependencies
+
+```{r, warning=FALSE}
+library(ggplot2)
+library(tibble)
+library(cowplot)
+source("./code/theme_gar.txt")
+source("./code/functions.R")
+source("./code/geneeg.R")
+# to use with eeg_noise function
+meanpower <- unlist(read.table("./code/meanpower.txt"))
+library(gsignal) # for filtering
+library(tidyverse)
+library(viridisLite)
+```
+
+# Conditions of simulated data
+
+```{r}
+seql <- 501 # sequence length in ms
+srate <- 500 # sampling rate 
+peakfr <- 5 # peak frequency
+onset1 <- 150 # onset in ms 
+onset2 <- 160
+amp1 <- 1 # peak amplitude
+amp2 <- 0.75
+fs <- srate # sampling rate
+cutoff <- 30 # low-pass cut-off
+nboot <- 1000
+aath <- 0.05 # arbitrary alpha threshold
+nsim <- 300
+inc.step <- 10
+
+Xf <- seq(from = 0, to = seql, by = 1000*1/srate)
+Nf <- length(Xf)
+
+ntrials <- 1 
+
+Nt <- 100 # maximum number of trials
+outvar <- 0.2
+
+```
+
+# Illustrate template
+
+To best approach the plots below, one must consider what the difference between the signals would look like. This plot illustrates the difference in signals without noise added.
+
+```{r}
+sig1 <- eeg_signal(seql = seql, ntrials = ntrials, srate = srate, peakfr = peakfr, 
+                   onset = onset1, onset_jitter = 0, sinhalf = TRUE, amp = amp1)
+
+sig2 <- eeg_signal(seql = seql, ntrials = ntrials, srate = srate, peakfr = peakfr, 
+                   onset = onset2, onset_jitter = 0, sinhalf = TRUE, amp = amp2)
+
+sig3 <- eeg_signal(seql = seql, ntrials = ntrials, srate = srate, peakfr = peakfr, 
+                   onset = onset2, onset_jitter = 0, sinhalf = TRUE, amp = amp1)
+
+sig4 <- eeg_signal(seql = seql, ntrials = ntrials, srate = srate, peakfr = peakfr, 
+                   onset = onset1, onset_jitter = 0, sinhalf = TRUE, amp = amp2)
+
+df_both <- tibble(x = rep(Xf,3),
+             y = c(sig1,sig2, sig1-sig2),
+             condition = factor(rep(c("ERP 1", "ERP 2", "Difference"), each = Nf)))
+
+df_lat <- tibble(x = rep(Xf,3),
+             y = c(sig1,sig3, sig1-sig3),
+             condition = factor(rep(c("ERP 1", "ERP 2", "Difference"), each = Nf)))
+
+df_amp <- tibble(x = rep(Xf,3),
+             y = c(sig1,sig4, sig1-sig4),
+             condition = factor(rep(c("ERP 1", "ERP 2", "Difference"), each = Nf)))
+
+signal_both <- ggplot(df_both, aes(x, y, linetype = condition)) + theme_gar +
+  geom_line() + 
+  labs(x = "Time in ms", y = "Signal in arbitrary units")
+
+signal_lat <- ggplot(df_lat, aes(x, y, linetype = condition)) + theme_gar +
+  geom_line() + 
+  labs(x = "Time in ms", y = "Signal in arbitrary units")
+
+signal_amp <- ggplot(df_amp, aes(x, y, linetype = condition)) + theme_gar +
+  geom_line() + 
+  labs(x = "Time in ms", y = "Signal in arbitrary units")
+
+plot_grid(signal_both, signal_lat, signal_amp, labels = c('A', 'B', 'C'), label_size = 12)
+
+ggsave("plots/template.png")
+```
+
+# Amplitude and Latency Difference
+
+## Load data
+
+This section of the document only covers the plots generated for analysis on two signals differing in amplitude and latency.
+
+```{r}
+load(file = "./data5000/onsetsim_ampandlat.RData")
+```
+
+## Onset comparison
+
+Two onset estimation methods were used in this research. This includes the MAX-thresholded statistics and the change-point detection algorithm. These were computed for each simulated dataset's t-tests at each timepoint and MANOVA at each time point. The plots below show the t-test computed onset and MANOVA computed onset using each method. The diagonal line represents if the same onset is computed for both tests.
+
+```{r}
+onsetFmax <- as_tibble(onsetF) %>%
+  mutate(method = "manova", onsettype = "cp", trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "onsetF")
+
+onsetFcp <- as_tibble(cponsetF) %>%
+  mutate(method = "manova", onsettype = "cp", trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "onsetF")
+
+onsetTmax <- as_tibble(onsetT) %>%
+  mutate(method = "manova", onsettype = "cp", trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "onsetT")
+
+onsetTcp <- as_tibble(cponsetT) %>%
+  mutate(method = "manova", onsettype = "cp", trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "onsetT")
+
+onsetmax <- inner_join(onsetFmax, onsetTmax, by = join_by(trials, perm))
+onsetcp <- inner_join(onsetFcp, onsetTcp, by = join_by(trials, perm))
+```
+
+```{r}
+plot_max_amplat <- ggplot(onsetmax, aes(x = onsetT, y = onsetF)) + theme_gar +
+  geom_point(alpha = 0.2) +
+  geom_abline(slope = 1, intercept = 0) +
+  labs(title = "MAX-thresholded", y = "Onset using MANOVAs", x = "Onset using T-tests")
+plot_cpd_amplat <- ggplot(onsetcp, aes(x = onsetT, y = onsetF)) + theme_gar +
+  geom_point(alpha = 0.2) +
+  geom_abline(slope = 1, intercept = 0) +
+  labs(title = "Change-point", y = "Onset using MANOVAs", x = "Onset using T-tests")
+```
+
+## Significant timepoint recovery comparison
+
+```{r}
+df_f_max <- as_tibble(rowMeans(sigMaxF, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "manova")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_t_max <- as_tibble(rowMeans(sigMaxT, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "t-test")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_f_uni <- as_tibble(rowMeans(sigUniF, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "manova")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_t_uni <- as_tibble(rowMeans(sigUniT, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "t-test") %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+
+df_max <- rbind(df_f_max, df_t_max) 
+df_max$trials <- 10*as.numeric(gsub("V", "", df_max$trials))
+df_uni <- rbind(df_f_uni, df_t_uni)
+df_uni$trials <- 10*as.numeric(gsub("V", "", df_uni$trials))
+  
+```
+
+```{r}
+sigtpmaxamplat <- ggplot(df_max, aes(x = timepoint, y = value, colour = method)) + theme_gar +
+  geom_line(alpha = 0.75) +
+  # using a colourblind friendly scale for accessibility
+  scale_colour_viridis_d(end = 0.7) +
+  labs(title = "Proportion of positive tests over time", y= "Positive tests (mean across trials)", x = "Time in ms") +
+  # adding a horizontal line indicating the arbitrary alpha threshold to show false positives
+  geom_hline(yintercept = aath) +
+  facet_wrap(~trials, nrow = 2, ncol = 5)
+
+
+sigtpuniamplat <- ggplot(df_uni, aes(x = timepoint, y = value, colour = method)) + theme_gar +
+  geom_line(alpha = 0.75) +
+  # using a colourblind friendly scale for accessibility
+  scale_colour_viridis_d(end = 0.7) +
+  labs(title = "Proportion of positive tests over time", y= "Positive tests (mean across trials)", x = "Time in ms") +
+  # adding a horizontal line indicating the arbitrary alpha threshold to show false positives
+  geom_hline(yintercept = aath) +
+  facet_wrap(~trials, nrow = 2, ncol = 5)
+
+```
+
+## Signal to noise ratio comparison
+
+```{r}
+df_f <- select(as_tibble(signoiseF), 1:nsim) %>%
+  # adding a trials column
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "signoiseF")
+  
+df_t <- select(as_tibble(signoiseT), 1:nsim) %>%
+  # adding a trials column
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "signoiseT")
+
+df <- inner_join(df_t, df_f) %>%
+  group_by(trials, perm) %>%
+  # plots will be based on the difference between the two signal to noise ratios
+  summarise(signoisediff = signoiseT-signoiseF)
+
+signoiseamplat <- ggplot(df, aes(x = signoisediff, colour = trials, group = trials)) + theme_gar +
+  geom_density(alpha = 0.7) +
+  # using a colourblind friendly scale for accessibility
+  scale_colour_viridis_c() +
+  # adding a vertical line and label of the median difference
+  geom_vline(aes(xintercept = median(signoisediff))) +
+  geom_label(aes(y = 0.15, x = 100, label = round(median(signoisediff), 2)), fill = "black", parse = TRUE) +
+  labs(title = "Difference in Signal-to-Noise ratio (SNR)", y = "Density", x = "T-test SNR - MANOVA SNR")
+
+```
+
+# Amplitude difference
+
+```{r}
+load(file = "./data5000/onsetsim_amp.RData")
+```
+
+## Onset comparison
+
+Two onset estimation methods were used in this research. This includes the MAX-thresholded statistics and the change-point detection algorithm. These were computed for each simulated dataset's t-tests at each timepoint and MANOVA at each time point. The plots below show the t-test computed onset and MANOVA computed onset using each method. The diagonal line represents if the same onset is computed for both tests.
+
+```{r}
+onsetFmax <- as_tibble(onsetF) %>%
+  mutate(method = "manova", onsettype = "cp", trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "onsetF")
+
+onsetFcp <- as_tibble(cponsetF) %>%
+  mutate(method = "manova", onsettype = "cp", trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "onsetF")
+
+onsetTmax <- as_tibble(onsetT) %>%
+  mutate(method = "manova", onsettype = "cp", trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "onsetT")
+
+onsetTcp <- as_tibble(cponsetT) %>%
+  mutate(method = "manova", onsettype = "cp", trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "onsetT")
+
+onsetmax <- inner_join(onsetFmax, onsetTmax, by = join_by(trials, perm))
+onsetcp <- inner_join(onsetFcp, onsetTcp, by = join_by(trials, perm))
+```
+
+```{r}
+plot_max_amp <- ggplot(onsetmax, aes(x = onsetT, y = onsetF)) + theme_gar +
+  geom_point(alpha = 0.2) +
+  geom_abline(slope = 1, intercept = 0) +
+  labs(title = "MAX-thresholded", y = "Onset using MANOVAs", x = "Onset using T-tests")
+plot_cpd_amp <- ggplot(onsetcp, aes(x = onsetT, y = onsetF)) + theme_gar +
+  geom_point(alpha = 0.2) +
+  geom_abline(slope = 1, intercept = 0) +
+  labs(title = "Change-point", y = "Onset using MANOVAs", x = "Onset using T-tests")
+
+```
+
+## Significant timepoint recovery comparison
+
+```{r}
+df_f_max <- as_tibble(rowMeans(sigMaxF, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "manova")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_t_max <- as_tibble(rowMeans(sigMaxT, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "t-test")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_f_uni <- as_tibble(rowMeans(sigUniF, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "manova")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_t_uni <- as_tibble(rowMeans(sigUniT, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "t-test") %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+
+df_max <- rbind(df_f_max, df_t_max) 
+df_max$trials <- 10*as.numeric(gsub("V", "", df_max$trials))
+df_uni <- rbind(df_f_uni, df_t_uni)
+df_uni$trials <- 10*as.numeric(gsub("V", "", df_uni$trials))
+  
+```
+
+```{r}
+sigtpmaxamp <- ggplot(df_max, aes(x = timepoint, y = value, colour = method)) + theme_gar +
+  geom_line(alpha = 0.75) +
+  # using a colourblind friendly scale for accessibility
+  scale_colour_viridis_d(end = 0.7) +
+  labs(title = "Proportion of positive tests over time", y= "Positive tests (mean across trials)", x = "Time in ms") +
+  # adding a horizontal line indicating the arbitrary alpha threshold to show false positives
+  geom_hline(yintercept = aath) +
+  facet_wrap(~trials, nrow = 2, ncol = 5)
+
+sigtpuniamp <- ggplot(df_uni, aes(x = timepoint, y = value, colour = method)) + theme_gar +
+  geom_line(alpha = 0.75) +
+  # using a colourblind friendly scale for accessibility
+  scale_colour_viridis_d(end = 0.7) +
+  labs(title = "Proportion of positive tests over time", y= "Positive tests (mean across trials)", x = "Time in ms") +
+  # adding a horizontal line indicating the arbitrary alpha threshold to show false positives
+  geom_hline(yintercept = aath) +
+  facet_wrap(~trials, nrow = 2, ncol = 5)
+```
+
+## Signal to noise ratio comparison
+
+```{r}
+df_f <- select(as_tibble(signoiseF), 1:nsim) %>%
+  # adding a trials column
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "signoiseF")
+  
+df_t <- select(as_tibble(signoiseT), 1:nsim) %>%
+  # adding a trials column
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "signoiseT")
+
+df <- inner_join(df_t, df_f) %>%
+  group_by(trials, perm) %>%
+  # plots will be based on the difference between the two signal to noise ratios
+  summarise(signoisediff = signoiseT-signoiseF)
+
+signoiseamp <- ggplot(df, aes(x = signoisediff, colour = trials, group = trials)) + theme_gar +
+  geom_density(alpha = 0.7) +
+  # using a colourblind friendly scale for accessibility
+  scale_colour_viridis_c() +
+  # adding a vertical line and label of the median difference
+  geom_vline(aes(xintercept = median(signoisediff))) +
+  geom_label(aes(y = 0.15, x = 100, label = round(median(signoisediff), 2)), fill = "black", parse = TRUE) +
+  labs(title = "Difference in Signal-to-Noise ratio (SNR)", y = "Density", x = "T-test SNR - MANOVA SNR")
+
+```
+
+# Latency difference
+
+```{r}
+load(file = "./data5000/onsetsim_lat.RData")
+```
+
+## Onset comparison
+
+Two onset estimation methods were used in this research. This includes the MAX-thresholded statistics and the change-point detection algorithm. These were computed for each simulated dataset's t-tests at each timepoint and MANOVA at each time point. The plots below show the t-test computed onset and MANOVA computed onset using each method. The diagonal line represents if the same onset is computed for both tests.
+
+```{r}
+onsetFmax <- as_tibble(onsetF) %>%
+  mutate(method = "manova", onsettype = "cp", trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "onsetF")
+
+onsetFcp <- as_tibble(cponsetF) %>%
+  mutate(method = "manova", onsettype = "cp", trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "onsetF")
+
+onsetTmax <- as_tibble(onsetT) %>%
+  mutate(method = "manova", onsettype = "cp", trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "onsetT")
+
+onsetTcp <- as_tibble(cponsetT) %>%
+  mutate(method = "manova", onsettype = "cp", trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "onsetT")
+
+onsetmax <- inner_join(onsetFmax, onsetTmax, by = join_by(trials, perm))
+onsetcp <- inner_join(onsetFcp, onsetTcp, by = join_by(trials, perm))
+```
+
+```{r}
+plot_max_lat <- ggplot(onsetmax, aes(x = onsetT, y = onsetF)) + theme_gar +
+  geom_point(alpha = 0.2) +
+  geom_abline(slope = 1, intercept = 0) +
+  labs(title = "MAX-thresholded", y = "Onset using MANOVAs", x = "Onset using T-tests")
+plot_cpd_lat <- ggplot(onsetcp, aes(x = onsetT, y = onsetF)) + theme_gar +
+  geom_point(alpha = 0.2) +
+  geom_abline(slope = 1, intercept = 0) +
+  labs(title = "Change-point", y = "Onset using MANOVAs", x = "Onset using T-tests")
+```
+
+## Significant timepoint recovery comparison
+
+```{r}
+df_f_max <- as_tibble(rowMeans(sigMaxF, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "manova")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_t_max <- as_tibble(rowMeans(sigMaxT, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "t-test")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_f_uni <- as_tibble(rowMeans(sigUniF, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "manova")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_t_uni <- as_tibble(rowMeans(sigUniT, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "t-test") %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+
+df_max <- rbind(df_f_max, df_t_max) 
+df_max$trials <- 10*as.numeric(gsub("V", "", df_max$trials))
+df_uni <- rbind(df_f_uni, df_t_uni)
+df_uni$trials <- 10*as.numeric(gsub("V", "", df_uni$trials))
+  
+```
+
+```{r}
+sigtpmaxlat <- ggplot(df_max, aes(x = timepoint, y = value, colour = method)) + theme_gar +
+  geom_line(alpha = 0.75) +
+  # using a colourblind friendly scale for accessibility
+  scale_colour_viridis_d(end = 0.7) +
+  labs(title = "Proportion of positive tests over time", y= "Positive tests (mean across trials)", x = "Time in ms") +
+  # adding a horizontal line indicating the arbitrary alpha threshold to show false positives
+  geom_hline(yintercept = aath) +
+  facet_wrap(~trials, nrow = 2, ncol = 5)
+
+sigtpunilat <- ggplot(df_uni, aes(x = timepoint, y = value, colour = method)) + theme_gar +
+  geom_line(alpha = 0.75) +
+  # using a colourblind friendly scale for accessibility
+  scale_colour_viridis_d(end = 0.7) +
+  labs(title = "Proportion of positive tests over time", y= "Positive tests (mean across trials)", x = "Time in ms") +
+  # adding a horizontal line indicating the arbitrary alpha threshold to show false positives
+  geom_hline(yintercept = aath) +
+  facet_wrap(~trials, nrow = 2, ncol = 5)
+
+```
+
+## Signal to noise ratio comparison
+
+```{r}
+df_f <- select(as_tibble(signoiseF), 1:nsim) %>%
+  # adding a trials column
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "signoiseF")
+  
+df_t <- select(as_tibble(signoiseT), 1:nsim) %>%
+  # adding a trials column
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "signoiseT")
+
+df <- inner_join(df_t, df_f) %>%
+  group_by(trials, perm) %>%
+  # plots will be based on the difference between the two signal to noise ratios
+  summarise(signoisediff = signoiseT-signoiseF)
+
+signoiselat <- ggplot(df, aes(x = signoisediff, colour = trials, group = trials)) + theme_gar +
+  geom_density(alpha = 0.7) +
+  # using a colourblind friendly scale for accessibility
+  scale_colour_viridis_c() +
+  # adding a vertical line and label of the median difference
+  geom_vline(aes(xintercept = median(signoisediff))) +
+  geom_label(aes(y = 0.15, x = 100, label = round(median(signoisediff), 2)), fill = "black", parse = TRUE) +
+  labs(title = "Difference in Signal-to-Noise ratio (SNR)", y = "Density", x = "T-test SNR - MANOVA SNR")
+
+```
+
+# Same signal
+
+```{r}
+load(file = "./data5000/onsetsim_same.RData")
+```
+
+## Onset comparison
+
+Two onset estimation methods were used in this research. This includes the MAX-thresholded statistics and the change-point detection algorithm. These were computed for each simulated dataset's t-tests at each timepoint and MANOVA at each time point. The plots below show the t-test computed onset and MANOVA computed onset using each method. The diagonal line represents if the same onset is computed for both tests.
+
+```{r}
+onsetFmax <- as_tibble(onsetF) %>%
+  mutate(method = "manova", onsettype = "cp", trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "onsetF")
+
+onsetFcp <- as_tibble(cponsetF) %>%
+  mutate(method = "manova", onsettype = "cp", trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "onsetF")
+
+onsetTmax <- as_tibble(onsetT) %>%
+  mutate(method = "manova", onsettype = "cp", trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "onsetT")
+
+onsetTcp <- as_tibble(cponsetT) %>%
+  mutate(method = "manova", onsettype = "cp", trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "onsetT")
+
+onsetmax <- inner_join(onsetFmax, onsetTmax, by = join_by(trials, perm))
+onsetcp <- inner_join(onsetFcp, onsetTcp, by = join_by(trials, perm))
+```
+
+```{r}
+plot_max_same <- ggplot(onsetmax, aes(x = onsetT, y = onsetF)) + theme_gar +
+  geom_point(alpha = 0.2) +
+  geom_abline(slope = 1, intercept = 0) +
+  labs(title = "MAX-thresholded", y = "Onset using MANOVAs", x = "Onset using T-tests")
+plot_cpd_same <- ggplot(onsetcp, aes(x = onsetT, y = onsetF)) + theme_gar +
+  geom_point(alpha = 0.2) +
+  geom_abline(slope = 1, intercept = 0) +
+  labs(title = "Change-point", y = "Onset using MANOVAs", x = "Onset using T-tests")
+
+```
+
+## Significant timepoint recovery comparison
+
+```{r}
+df_f_max <- as_tibble(rowMeans(sigMaxF, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "manova")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_t_max <- as_tibble(rowMeans(sigMaxT, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "t-test")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_f_uni <- as_tibble(rowMeans(sigUniF, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "manova")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_t_uni <- as_tibble(rowMeans(sigUniT, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "t-test") %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+
+df_max <- rbind(df_f_max, df_t_max) 
+df_max$trials <- 10*as.numeric(gsub("V", "", df_max$trials))
+df_uni <- rbind(df_f_uni, df_t_uni)
+df_uni$trials <- 10*as.numeric(gsub("V", "", df_uni$trials))
+  
+```
+
+```{r}
+sigtpmaxsame <- ggplot(df_max, aes(x = timepoint, y = value, colour = method)) + theme_gar +
+  geom_line(alpha = 0.75) +
+  # using a colourblind friendly scale for accessibility
+  scale_colour_viridis_d(end = 0.7) +
+  labs(title = "Proportion of positive tests over time", y= "Positive tests (mean across trials)", x = "Time in ms") +
+  # adding a horizontal line indicating the arbitrary alpha threshold to show false positives
+  geom_hline(yintercept = aath) +
+  facet_wrap(~trials, nrow = 2, ncol = 5)
+
+sigtpunisame <- ggplot(df_uni, aes(x = timepoint, y = value, colour = method)) + theme_gar +
+  geom_line(alpha = 0.75) +
+  # using a colourblind friendly scale for accessibility
+  scale_colour_viridis_d(end = 0.7) +
+  labs(title = "Proportion of positive tests over time", y= "Positive tests (mean across trials)", x = "Time in ms") +
+  # adding a horizontal line indicating the arbitrary alpha threshold to show false positives
+  geom_hline(yintercept = aath) +
+  facet_wrap(~trials, nrow = 2, ncol = 5)
+```
+
+## Signal to noise ratio comparison
+
+```{r}
+df_f <- select(as_tibble(signoiseF), 1:nsim) %>%
+  # adding a trials column
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "signoiseF")
+  
+df_t <- select(as_tibble(signoiseT), 1:nsim) %>%
+  # adding a trials column
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "signoiseT")
+
+df <- inner_join(df_t, df_f) %>%
+  group_by(trials, perm) %>%
+  # plots will be based on the difference between the two signal to noise ratios
+  summarise(signoisediff = signoiseT-signoiseF)
+
+signoisesame <- ggplot(df, aes(x = signoisediff, colour = trials, group = trials)) + theme_gar +
+  geom_density(alpha = 0.7) +
+  # using a colourblind friendly scale for accessibility
+  scale_colour_viridis_c() +
+  # adding a vertical line and label of the median difference
+  geom_vline(aes(xintercept = median(signoisediff))) +
+  geom_label(aes(y = 0.15, x = 100, label = round(median(signoisediff), 2)), fill = "black", parse = TRUE) +
+  labs(title = "Difference in Signal-to-Noise ratio (SNR)", y = "Density", x = "T-test SNR - MANOVA SNR")
+
+```
+
+# Consolidating plots
+
+```{r}
+onset <- plot_grid(plot_max_amplat, plot_cpd_amplat, plot_max_lat, plot_cpd_lat, plot_max_amp, plot_cpd_amp, plot_max_same, plot_cpd_same, labels = c('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'), label_size = 12, nrow = 4, ncol = 2)
+print(onset)
+
+signoise <- plot_grid(signoiseamplat, signoiselat,signoiseamp, signoisesame, labels = c('A', 'B', 'C', 'D'), label_size = 12, nrow = 2, ncol = 2)
+print(signoise)
+```
+
+```{r}
+sigtp <- plot_grid(sigtpmaxamplat, sigtpuniamplat, sigtpmaxlat, sigtpunilat, sigtpmaxamp, sigtpuniamp, sigtpmaxsame, sigtpunisame, labels = c('A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'), label_size = 12, nrow = 4, ncol = 2)
+print(sigtp)
+```
