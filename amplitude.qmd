@@ -1,0 +1,153 @@
+---
+title: "ERP Simulations: Differing in amplitude only"
+author: "Theo Stolz"
+date: "`r Sys.Date()`"
+format: html
+editor: visual
+---
+
+## Dependencies
+
+```{r, message=FALSE}
+library(ggplot2)
+library(tibble)
+library(cowplot)
+library(beepr)
+library(Rfast)
+# library(WRS2)
+source("./code/functions.R")
+source("./code/theme_gar.txt")
+# Load template: true onset = 160 ms, F=81, max at F=126
+# True offset = 340 ms, F=171
+# source("./code/erp_template.R")
+# R version of Matlab code from Yeung et al. 2004
+# https://data.mrc.ox.ac.uk/data-set/simulated-eeg-data-generator
+source("./code/geneeg.R")
+# to use with eeg_noise function
+meanpower <- unlist(read.table("./code/meanpower.txt"))
+library(gsignal) # for filtering
+library(Hotelling)
+library(changepoint)
+```
+
+```{r}
+seql <- 501 # sequence length in ms
+srate <- 500 # sampling rate 
+peakfr <- 5 # peak frequency
+onset1 <- 150 # onset in ms
+# onset2 <- 160
+amp1 <- 1 # peak amplitude
+amp2 <- 0.75
+fs <- srate # sampling rate
+cutoff <- 30 # low-pass cut-off
+bf <- butter(n=4, w=cutoff / (fs / 2), type = "low") 
+nboot <- 1000
+aath <- 0.05 # arbitrary alpha threshold
+nsim <- 100
+inc.step <- 10
+
+Xf <- seq(from = 0, to = seql, by = 1000*1/srate)
+Nf <- length(Xf)
+
+Nt <- 100 # maximum number of trials
+outvar <- 0.2
+```
+
+```{r, warning = FALSE}
+onsetF <- matrix(ncol = nsim, nrow = Nt/10) # Onsets of MAX thresholded statistics
+onsetT <- matrix(ncol = nsim, nrow = Nt/10)
+cponsetF <- matrix(ncol = nsim, nrow = Nt/10) # change point onset
+cponsetT <- matrix(ncol = nsim, nrow = Nt/10)
+signoiseF <- matrix(ncol = nsim, nrow = Nt/10)
+signoiseT <- matrix(ncol = nsim, nrow = Nt/10)
+sigMaxT <- array(0, dim = c(Nf, Nt/10, nsim)) 
+sigMaxF <- array(0, dim = c(Nf, Nt/10, nsim))
+sigUniT <- array(0, dim = c(Nf, Nt/10, nsim)) 
+sigUniF <- array(0, dim = c(Nf, Nt/10, nsim))
+for(S in 1:nsim){
+  
+  sim.counter(S, nsim, inc = inc.step)
+  
+# Generate eeg signals with sinusoidal noise
+  
+  ERP1 <- eeg_sim(seql = seql, ntrials = Nt, srate = srate, peakfr = peakfr, 
+                onset = onset1, outvar = outvar, amp = amp1)
+
+  ERP2 <- eeg_sim(seql = seql, ntrials = Nt, srate = srate, peakfr = peakfr, 
+                onset = onset1, outvar = outvar, amp = amp2)
+  
+# Low-pass Butterworth filter
+
+  ERP1.filt <- ERP1
+  ERP2.filt <- ERP2
+  for(F in 1:Nt){
+   ERP1.filt[,F] <- filtfilt(bf, ERP1[,F])
+   ERP2.filt[,F] <- filtfilt(bf, ERP2[,F])
+  }
+
+# Compute gradients for multivariate analysis 
+    
+  ERP1.grad <- ERP1
+  ERP2.grad <- ERP2
+  for(F in 1:Nt){
+  ERP1.grad[,F] <- c(0,diff(ERP1.filt[,F]))
+  ERP2.grad[,F] <- c(0,diff(ERP2.filt[,F]))
+  }
+  
+  
+  for (T in seq(10, Nt, 10)) {
+
+# Calculate T-tests and MANOVA
+    
+    ori.t2 <- Rfast::ttests(Rfast::transpose(ERP1.filt[, 1:T]), Rfast::transpose(ERP2.filt[, 1:T]))[,1]^2
+
+    ori.F <- vector(mode = "numeric", length = Nf)
+    for(F in 2:Nf){
+      ori.F[F] <- hotelling.stat(cbind(ERP1.filt[F, 1:T],ERP1.grad[F,1:T]), cbind(ERP2.filt[F,1:T],ERP2.grad[F,1:T]), shrinkage=FALSE, var.equal=FALSE)$statistic
+    }
+
+# Create permutation distributions
+    
+    res <- permtfdist(ERP1.filt[, 1:T], ERP2.filt[, 1:T], ERP1.grad[, 1:T], ERP2.grad[, 1:T], Nf, T, nboot = nboot)
+
+# Change point onset detection
+    
+    resT <- cpt.meanvar(ori.t2, method = "BinSeg", Q=2)
+    cponsetT[T/10,S] <- Xf[resT@cpts[1]]
+    resF <- cpt.meanvar(ori.F, method = "BinSeg", Q=2)
+    cponsetF[T/10,S] <- Xf[resF@cpts[1]]
+
+# Retrieve 95th quantile of permutation distributions
+    
+    perm.t2 <- res$t.amp^2
+    perm.t2.th <- apply(perm.t2, 2, quantile, probs = 1-aath)
+    perm.F <- res$f.amp.grad
+    perm.F.th <- apply(perm.F, 2, quantile, probs = 1-aath)
+
+# MAX corrected onsets
+    
+    max.t2.th <- quantile(apply(perm.t2, 1, max), probs = 1-aath)
+    max.F.th <- quantile(apply(perm.F, 1, max), probs = 1-aath)
+    
+    onsetT[T/10, S] <- find_onset(ori.t2 >= max.t2.th, Xf)
+    onsetF[T/10, S] <- find_onset(ori.F >= max.F.th, Xf)
+    
+# Positive tests over time
+
+    sigMaxT[, T/10, S] <- as.numeric(ori.t2 >= max.t2.th)
+    sigMaxF[, T/10, S] <- as.numeric(ori.F  >= max.F.th)
+    
+    sigUniT[, T/10, S] <- as.numeric(ori.t2 >= perm.t2.th) 
+    sigUniF[, T/10, S] <- as.numeric(ori.F >= perm.F.th)
+    
+# Signal to noise ratio
+    
+    signoiseF[T/10, S] <- median(ori.F[which(Xf == (onset1)):which(Xf == (onset1+(1/peakfr)/(1/srate)))]) / mad(ori.F[which(Xf == 0):which(Xf == onset1)]) 
+    signoiseT[T/10, S] <- median(ori.t2[which(Xf == (onset1)):which(Xf == (onset1+(1/peakfr)/(1/srate)))]) / mad(ori.t2[which(Xf == 0):which(Xf == onset1)]) 
+  }
+}
+
+# Saving data
+save(onsetF, onsetT, sigMaxF, sigMaxT, sigUniT, sigUniF, signoiseF, signoiseT, cponsetF, cponsetT,
+     file = "./data/onsetsim_amp.RData")
+```
