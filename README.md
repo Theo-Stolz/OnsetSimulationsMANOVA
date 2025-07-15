@@ -13,7 +13,7 @@ Code and data for simulation Masters Thesis project on MEEG onset estimation. Th
 ### Measures in Simulations
 | Measure | Calculation method | Object name |
 | ----- | ----- | ----- |
-| Change Point Onset | Onsets as determined by the change point detection algorithm from the @changepoint package. | cponsetT / cponsetF |
+| Change Point Onset | Onsets as determined by the change point detection algorithm from the `changepoint` package. | cponsetT / cponsetF |
 | Onsets of MAX thresholded statistics | Onsets as determined through MAX thresholded statistics. | onsetT / onsetF |
 | Signal-to-Noise Ratio | Dividing median the T^2 or F statistic from baseline until end of signal by the mean absolute deviation along the baseline (from 0 to the onset).| signoiseT / signoiseF |
 | Proportion of positive tests over time | Retrieving the number of tests that exceed the MAX threshold across simulations for each time point. | sigMaxT / sigMaxF |
