@@ -4,10 +4,10 @@ Code and data for simulation Masters Thesis project on MEEG onset estimation. Th
 ## R code
 | Notebook | Content | Figures |
 | ----- | ----- | ----- |
-|`amplitude.qmd`| Simulations of two signals that differ only in amplitude. | TBD |
-|`latency.qmd`| Simulations of two signals that differ only in latency. | TBD |
-|`amplitudeandlatency.qmd`| Simulations of two signals that differ in amplitude and latency. | TBD |
-|`samesignal.qmd`| Simulations of two signals do not differ. | TBD |
+|`amplitude.qmd`| Simulations of two signals that differ only in amplitude. | NA, simulations only |
+|`latency.qmd`| Simulations of two signals that differ only in latency. | NA, simulations only |
+|`amplitudeandlatency.qmd`| Simulations of two signals that differ in amplitude and latency. | NA, simulations only |
+|`samesignal.qmd`| Simulations of two signals do not differ. | NA, simulations only |
 |`plots.qmd`| Plots generated for report from simulations. | TBD |
 
 ### Measures in Simulations
