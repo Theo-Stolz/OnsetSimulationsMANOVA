@@ -1,0 +1,651 @@
+---
+title: "Illustrating simulation results"
+author: "Theo Stolz"
+date: "`r Sys.Date()`"
+format: html
+editor: visual
+---
+
+This document covers the plot creation of simulations comparing methods of univariate T-tests on amplitude and multivariate MANOVA on amplitude and gradient in achieving more accurate onset estimation of EEG event-related potentials (ERPs).
+
+# Dependencies
+
+```{r, warning=FALSE}
+library(ggplot2)
+library(tibble)
+library(cowplot)
+source("./code/theme_gar.txt")
+source("./code/functions.R")
+source("./code/geneeg.R")
+# to use with eeg_noise function
+meanpower <- unlist(read.table("./code/meanpower.txt"))
+library(gsignal) # for filtering
+library(tidyverse)
+library(viridisLite)
+library(faux)
+library(WRS2)
+```
+
+# Conditions of simulated data
+
+```{r}
+seql <- 501 # sequence length in ms
+srate <- 500 # sampling rate 
+peakfr <- 5 # peak frequency
+onset1 <- 150 # onset in ms 
+onset2 <- 160
+amp1 <- 1 # peak amplitude
+amp2 <- 0.75
+fs <- srate # sampling rate
+cutoff <- 30 # low-pass cut-off
+nboot <- 1000
+aath <- 0.05 # arbitrary alpha threshold
+nsim <- 5000
+inc.step <- 10
+
+Xf <- seq(from = 0, to = seql, by = 1000*1/srate)
+Nf <- length(Xf)
+
+ntrials <- 1 
+
+Nt <- 100 # maximum number of trials
+outvar <- 0.2
+
+```
+
+# Illustrate template
+
+To best approach the plots below, one must consider what the difference between the signals would look like. This plot illustrates the difference in signals without noise added.
+
+```{r}
+sig1 <- eeg_signal(seql = seql, ntrials = ntrials, srate = srate, peakfr = peakfr, 
+                   onset = onset1, onset_jitter = 0, sinhalf = TRUE, amp = amp1)
+
+sig2 <- eeg_signal(seql = seql, ntrials = ntrials, srate = srate, peakfr = peakfr, 
+                   onset = onset2, onset_jitter = 0, sinhalf = TRUE, amp = amp2)
+
+sig3 <- eeg_signal(seql = seql, ntrials = ntrials, srate = srate, peakfr = peakfr, 
+                   onset = onset2, onset_jitter = 0, sinhalf = TRUE, amp = amp1)
+
+sig4 <- eeg_signal(seql = seql, ntrials = ntrials, srate = srate, peakfr = peakfr, 
+                   onset = onset1, onset_jitter = 0, sinhalf = TRUE, amp = amp2)
+
+resmat <- eeg_noise(npts = Nf, srate = srate, outvar = outvar, nsig = 50, ntrials = 4, meanpower)
+
+df_both <- tibble(x = rep(Xf,2),
+             y = c(sig1,sig2),
+             condition = factor(rep(c("ERP 1", "ERP 2"), each = Nf)))
+
+df_lat <- tibble(x = rep(Xf,2),
+             y = c(sig1,sig3),
+             condition = factor(rep(c("ERP 1", "ERP 2"), each = Nf)))
+
+df_amp <- tibble(x = rep(Xf,2),
+             y = c(sig1,sig4),
+             condition = factor(rep(c("ERP 1", "ERP 2"), each = Nf)))
+
+df_noise <- tibble(x = rep(Xf, 4),
+             y = as.vector(resmat),
+             trials = factor(rep(seq(1,4), each = Nf)))
+
+noise_plot <- ggplot(df_noise, aes(x, y, group = trials)) + theme_gar + 
+  geom_line(show.legend = FALSE) +
+  labs(x = "Time in ms", y = "Signal in arbitrary units") +
+  facet_wrap(vars(trials), nrow = 2) +
+  theme(strip.background = element_blank(),
+        strip.text.x = element_blank(),
+        axis.text = element_text(size = 10),
+        axis.title = element_text(size = 10))
+
+signal_both <- ggplot(df_both, aes(x, y, linetype = condition)) + theme_gar +
+  geom_line() + 
+  labs(x = "Time in ms", y = "Signal in arbitrary units") +
+  guides(linetype = FALSE) +
+  theme(axis.text = element_text(size = 10),
+        axis.title = element_text(size = 10))
+
+signal_lat <- ggplot(df_lat, aes(x, y, linetype = condition)) + theme_gar +
+  geom_line() + 
+  labs(x = "Time in ms", y = "Signal in arbitrary units") +
+  guides(linetype = FALSE) +
+  theme(axis.text = element_text(size = 10),
+        axis.title = element_text(size = 10))
+
+signal_amp <- ggplot(df_amp, aes(x, y, linetype = condition)) + theme_gar +
+  geom_line() + 
+  labs(x = "Time in ms", y = "Signal in arbitrary units") +
+  guides(linetype = FALSE) +
+  theme(axis.text = element_text(size = 10),
+        axis.title = element_text(size = 10))
+
+plot_grid(signal_amp, signal_lat, signal_both, noise_plot, labels = c('A', 'B', 'C', 'D'), label_size = 12)
+
+ggsave("plots/template.png")
+```
+
+# Consolidate simulation data
+
+## Amplitude and Latency
+
+Two onset estimation methods were used in this research. This includes the MAX-thresholded statistics and the change-point detection algorithm. These were computed for each simulated dataset's t-tests at each timepoint and MANOVA at each time point. The plots below show the t-test computed onset and MANOVA computed onset using each method. The diagonal line represents if the same onset is computed for both tests.
+
+```{r}
+load(file = "./data5000/onsetsim_ampandlat.RData")
+
+onsetFmax <- as_tibble(onsetF) %>%
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "MANOVA")
+
+onsetFcp <- as_tibble(cponsetF) %>%
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "MANOVA")
+
+onsetTmax <- as_tibble(onsetT) %>%
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "T-test")
+
+onsetTcp <- as_tibble(cponsetT) %>%
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "T-test")
+
+onsetmax <- inner_join(onsetFmax, onsetTmax, by = join_by(trials, perm))  %>%
+  mutate(onset_method = "max-thresholded")
+onsetcp <- inner_join(onsetFcp, onsetTcp, by = join_by(trials, perm)) %>%
+  mutate(onset_method = "change-point")
+
+onsets_amplat <- rbind(onsetmax, onsetcp) %>%
+  pivot_longer(c("T-test", "MANOVA"), names_to = "test", values_to = "onset") %>%
+  mutate(difference = "Both")
+
+df_f_max <- as_tibble(rowMeans(sigMaxF, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "manova")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_t_max <- as_tibble(rowMeans(sigMaxT, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "t-test")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_f_uni <- as_tibble(rowMeans(sigUniF, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "manova")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_t_uni <- as_tibble(rowMeans(sigUniT, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "t-test") %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+
+
+df_max_amplat <- rbind(df_f_max, df_t_max) %>%
+  mutate(difference = "Both")
+df_uni_amplat <- rbind(df_f_uni, df_t_uni) %>%
+  mutate(difference = "Both")
+
+totaltp_f_max <- as_tibble(colSums(sigMaxF, dims = 1)) %>%
+  mutate(trials = seq(10, 100, 10), method = "manova") %>%
+  pivot_longer(V1:V5000, names_to = "sim", values_to = "value")
+totaltp_t_max <- as_tibble(colSums(sigMaxT, dims = 1)) %>%
+  mutate(trials = seq(10, 100, 10), method = "t-test") %>%
+  pivot_longer(V1:V5000, names_to = "sim", values_to = "value")
+totaltp_f_uni <- as_tibble(colSums(sigUniF, dims = 1)) %>%
+  mutate(trials = seq(10, 100, 10), method = "manova") %>%
+  pivot_longer(V1:V5000, names_to = "sim", values_to = "value")
+totaltp_t_uni <- as_tibble(colSums(sigUniT, dims = 1)) %>%
+  mutate(trials = seq(10, 100, 10), method = "t-test") %>%
+  pivot_longer(V1:V5000, names_to = "sim", values_to = "value")
+
+totaltp_max_amplat <- rbind(totaltp_f_max, totaltp_t_max) %>%
+  group_by(method, trials) %>%
+  summarise(mediantp = median(value)) %>%
+  mutate(difference = "Both")
+
+totaltp_uni_amplat <- rbind(totaltp_f_uni, totaltp_t_uni) %>%
+  group_by(method, trials) %>%
+  summarise(mediantp = median(value)) %>%
+  mutate(difference = "Both")
+```
+
+## Amplitude Only
+
+```{r}
+load(file = "./data5000/onsetsim_amp.RData")
+
+onsetFmax <- as_tibble(onsetF) %>%
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "MANOVA")
+
+onsetFcp <- as_tibble(cponsetF) %>%
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "MANOVA")
+
+onsetTmax <- as_tibble(onsetT) %>%
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "T-test")
+
+onsetTcp <- as_tibble(cponsetT) %>%
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "T-test")
+
+onsetmax <- inner_join(onsetFmax, onsetTmax, by = join_by(trials, perm))  %>%
+  mutate(onset_method = "max-thresholded")
+onsetcp <- inner_join(onsetFcp, onsetTcp, by = join_by(trials, perm)) %>%
+  mutate(onset_method = "change-point")
+
+onsets_amp <- rbind(onsetmax, onsetcp) %>%
+  pivot_longer(c("T-test", "MANOVA"), names_to = "test", values_to = "onset") %>%
+  mutate(difference = "Amplitude")
+
+df_f_max <- as_tibble(rowMeans(sigMaxF, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "manova")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_t_max <- as_tibble(rowMeans(sigMaxT, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "t-test")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_f_uni <- as_tibble(rowMeans(sigUniF, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "manova")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_t_uni <- as_tibble(rowMeans(sigUniT, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "t-test") %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+
+df_max_amp <- rbind(df_f_max, df_t_max) %>%
+  mutate(difference = "Amplitude")
+df_uni_amp <- rbind(df_f_uni, df_t_uni) %>%
+  mutate(difference = "Amplitude")
+
+
+totaltp_f_max <- as_tibble(colSums(sigMaxF, dims = 1)) %>%
+  mutate(trials = seq(10, 100, 10), method = "manova") %>%
+  pivot_longer(V1:V5000, names_to = "sim", values_to = "value")
+totaltp_t_max <- as_tibble(colSums(sigMaxT, dims = 1)) %>%
+  mutate(trials = seq(10, 100, 10), method = "t-test") %>%
+  pivot_longer(V1:V5000, names_to = "sim", values_to = "value")
+totaltp_f_uni <- as_tibble(colSums(sigUniF, dims = 1)) %>%
+  mutate(trials = seq(10, 100, 10), method = "manova") %>%
+  pivot_longer(V1:V5000, names_to = "sim", values_to = "value")
+totaltp_t_uni <- as_tibble(colSums(sigUniT, dims = 1)) %>%
+  mutate(trials = seq(10, 100, 10), method = "t-test") %>%
+  pivot_longer(V1:V5000, names_to = "sim", values_to = "value")
+
+totaltp_max_amp <- rbind(totaltp_f_max, totaltp_t_max) %>%
+  group_by(method, trials) %>%
+  summarise(mediantp = median(value)) %>%
+  mutate(difference = "Amplitude")
+
+totaltp_uni_amp <- rbind(totaltp_f_uni, totaltp_t_uni) %>%
+  group_by(method, trials) %>%
+  summarise(mediantp = median(value)) %>%
+  mutate(difference = "Amplitude")
+```
+
+## Latency Only
+
+```{r}
+load(file = "./data5000/onsetsim_lat.RData")
+
+onsetFmax <- as_tibble(onsetF) %>%
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "MANOVA")
+
+onsetFcp <- as_tibble(cponsetF) %>%
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "MANOVA")
+
+onsetTmax <- as_tibble(onsetT) %>%
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "T-test")
+
+onsetTcp <- as_tibble(cponsetT) %>%
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "T-test")
+
+onsetmax <- inner_join(onsetFmax, onsetTmax, by = join_by(trials, perm))  %>%
+  mutate(onset_method = "max-thresholded")
+onsetcp <- inner_join(onsetFcp, onsetTcp, by = join_by(trials, perm)) %>%
+  mutate(onset_method = "change-point")
+
+onsets_lat <- rbind(onsetmax, onsetcp) %>%
+  pivot_longer(c("T-test", "MANOVA"), names_to = "test", values_to = "onset") %>%
+  mutate(difference = "Latency")
+
+df_f_max <- as_tibble(rowMeans(sigMaxF, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "manova")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_t_max <- as_tibble(rowMeans(sigMaxT, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "t-test")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_f_uni <- as_tibble(rowMeans(sigUniF, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "manova")  %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+df_t_uni <- as_tibble(rowMeans(sigUniT, dims = 2)) %>%
+  mutate(timepoint = Xf, method = "t-test") %>%
+  pivot_longer(V1:V10, names_to = "trials", values_to = "value")
+
+df_max_lat <- rbind(df_f_max, df_t_max) %>%
+  mutate(difference = "Latency")
+df_uni_lat <- rbind(df_f_uni, df_t_uni) %>%
+  mutate(difference = "Latency")
+
+totaltp_f_max <- as_tibble(colSums(sigMaxF, dims = 1)) %>%
+  mutate(trials = seq(10, 100, 10), method = "manova") %>%
+  pivot_longer(V1:V5000, names_to = "sim", values_to = "value")
+totaltp_t_max <- as_tibble(colSums(sigMaxT, dims = 1)) %>%
+  mutate(trials = seq(10, 100, 10), method = "t-test") %>%
+  pivot_longer(V1:V5000, names_to = "sim", values_to = "value")
+totaltp_f_uni <- as_tibble(colSums(sigUniF, dims = 1)) %>%
+  mutate(trials = seq(10, 100, 10), method = "manova") %>%
+  pivot_longer(V1:V5000, names_to = "sim", values_to = "value")
+totaltp_t_uni <- as_tibble(colSums(sigUniT, dims = 1)) %>%
+  mutate(trials = seq(10, 100, 10), method = "t-test") %>%
+  pivot_longer(V1:V5000, names_to = "sim", values_to = "value")
+
+totaltp_max_lat <- rbind(totaltp_f_max, totaltp_t_max)  %>%
+  group_by(method, trials) %>%
+  summarise(mediantp = median(value)) %>%
+  mutate(difference = "Latency")
+
+totaltp_uni_lat <- rbind(totaltp_f_uni, totaltp_t_uni) %>%
+  group_by(method, trials) %>%
+  summarise(mediantp = median(value)) %>%
+  mutate(difference = "Latency")
+```
+
+```{r}
+onsets <- rbind(onsets_amp, onsets_lat, onsets_amplat)
+onsets$difference <- factor(onsets$difference, levels=unique(c("Amplitude", "Latency", "Both")))
+onsets_plot <- onsets  %>%
+  filter(trials == "100")
+
+tbl_onsets <- onsets_plot %>% 
+  group_by(difference, onset_method, test) %>% 
+  summarise(OnsetMedian = median(onset, na.rm = TRUE),
+            Bias = median(onset, na.rm = TRUE) - onset1,# median
+            Variance = round(var(onset, na.rm = TRUE), digits=0),
+            MAE = round(mean(abs(onset - onset1), na.rm = TRUE), digits=1),
+            EarlyProportion = round(100*mean((onset - onset1) < 0, na.rm = TRUE), digits=1),
+            NA_count = sum(is.na(onset))) # lower bound
+
+fulltbl_onsets <- onsets %>% 
+  group_by(trials,difference, onset_method, test) %>% 
+  summarise(OnsetMedian = median(onset, na.rm = TRUE),
+            Bias = median(onset, na.rm = TRUE) - onset1,# median
+            Variance = round(var(onset, na.rm = TRUE), digits=0),
+            MAE = round(mean(abs(onset - onset1), na.rm = TRUE), digits=1),
+            EarlyProportion = round(100*mean((onset - onset1) < 0, na.rm = TRUE), digits=1),
+            NA_count = sum(is.na(onset))) # lower bound
+tbl_onsets
+```
+
+```{r}
+plot_onsets <- onsets_plot %>% 
+  ggplot(aes(x = onset, colour = difference)) + 
+  geom_density(alpha = 0.7) +
+  geom_vline(xintercept = onset1, alpha = 0.5) +
+  scale_x_continuous(limits = c(0, 300)) +
+  facet_grid(rows = vars(test), cols = vars(onset_method), scales = "fixed") +
+  scale_colour_viridis_d(end = 0.7) +
+  labs(x = "Onset (ms)", colour = "Signals differing in", y = "Relative Density")
+
+plot_onsets
+
+ggsave("plots/onsets.png")
+
+
+plot_onsets2 <- tbl_onsets %>%
+  ggplot(aes(x = Bias, y = MAE, shape = difference, colour = interaction(test, onset_method, sep = " "))) +
+  geom_point(size = 4, alpha = 0.9) +
+  scale_y_continuous(limits = c(0, 25)) +
+  scale_colour_viridis_d(end = 0.7) +
+  labs(x = "Bias (ms)", y = "MAE (ms)", shape = "Signals differing in", colour = "Test and onset detection method") +
+  theme(legend.position = "right") +
+  theme_gar +
+  geom_vline(xintercept = 0) +
+  theme(axis.text = element_text(size = 6),
+        legend.text = element_text(size = 10),
+        legend.title = element_text(size = 11))
+plot_onsets2 
+
+
+ggsave("plots/onsets2.png")
+```
+
+```{r}
+fulltbl_amp <- fulltbl_onsets %>%
+  filter(difference == "Amplitude")
+
+plot_bias <- fulltbl_amp %>%
+  ggplot(aes(x = trials, y = Bias, colour = interaction(test, onset_method, sep = " "))) +
+  geom_point(size = 2) +
+  scale_colour_viridis_d(end = 0.8, guide = "none") +
+  labs(x = "Sample size", y = "Bias (ms)", colour = "Test and onset detection method") +
+  geom_line() +
+  scale_x_continuous(breaks = seq(10, 100, 10))
+
+plot_MAE <- fulltbl_amp %>%
+  ggplot(aes(x = trials, y = MAE, colour = interaction(test, onset_method, sep = " "))) +
+  geom_point(size = 2) +
+  scale_colour_viridis_d(end = 0.8) +
+  labs(x = "Sample size", y = "MAE (ms)", colour = "Test and onset detection method") +
+  theme(legend.position = c(.65, .8)) +
+  geom_line() +
+  scale_x_continuous(breaks = seq(10, 100, 10))
+
+plot_variance <- fulltbl_amp %>%
+  ggplot(aes(x = trials, y = Variance, colour = interaction(test, onset_method, sep = " "))) +
+  geom_point(size = 2) +
+  scale_colour_viridis_d(end = 0.8, guide = "none") +
+  labs(x = "Sample size", y = "Variance (ms^2)", colour = "Test and onset detection method") +
+  geom_line() +
+  scale_x_continuous(breaks = seq(10, 100, 10))
+
+plot_early <- fulltbl_amp %>%
+  ggplot(aes(x = trials, y = EarlyProportion, colour = interaction(test, onset_method, sep = " "))) +
+  geom_point(size = 2) +
+  scale_colour_viridis_d(end = 0.8, guide = "none") +
+  labs(x = "Sample size", y = "Proportion too early", colour = "Test and onset detection method") +
+  geom_line() +
+  scale_y_continuous(limits = c(0, 100)) +
+  scale_x_continuous(breaks = seq(10, 100, 10))
+
+
+plot_grid(plot_bias, plot_MAE, plot_variance, plot_early)
+
+ggsave("plots/amp_onsetmeasures.png")
+```
+
+```{r}
+fulltbl_lat <- fulltbl_onsets %>%
+  filter(difference == "Latency")
+
+plot_bias <- fulltbl_lat %>%
+  ggplot(aes(x = trials, y = Bias, colour = interaction(test, onset_method, sep = " "))) +
+  geom_point(size = 2) +
+  scale_colour_viridis_d(end = 0.8, guide = "none") +
+  labs(x = "Sample size", y = "Bias (ms)",  colour = "Test and onset detection method") +
+  geom_line() +
+  scale_x_continuous(breaks = seq(10, 100, 10))
+
+plot_MAE <- fulltbl_lat %>%
+  ggplot(aes(x = trials, y = MAE, colour = interaction(test, onset_method, sep = " "))) +
+  geom_point(size = 2) +
+  scale_colour_viridis_d(end = 0.8) +
+  labs(x = "Sample size", y = "MAE (ms)",  colour = "Test and onset detection method") +
+  theme(legend.position = c(.65, .8)) +
+  geom_line() +
+  scale_x_continuous(breaks = seq(10, 100, 10))
+
+plot_variance <- fulltbl_lat %>%
+  ggplot(aes(x = trials, y = Variance, colour = interaction(test, onset_method, sep = " "))) +
+  geom_point(size = 2) +
+  scale_colour_viridis_d(end = 0.8, guide = "none") +
+  labs(x = "Sample size", y = "Variance (ms^2)", colour = "Test and onset detection method") +
+  geom_line() +
+  scale_x_continuous(breaks = seq(10, 100, 10))
+
+plot_early <- fulltbl_lat %>%
+  ggplot(aes(x = trials, y = EarlyProportion, colour = interaction(test, onset_method, sep = " "))) +
+  geom_point(size = 2) +
+  scale_colour_viridis_d(end = 0.8, guide = "none") +
+  labs(x = "Sample size", y = "Proportion too early", colour = "Test and onset detection method") +
+  geom_line() +
+  scale_x_continuous(breaks = seq(10, 100, 10))
+
+plot_grid(plot_bias, plot_MAE, plot_variance, plot_early)
+
+ggsave("plots/lat_onsetmeasures.png")
+```
+
+```{r}
+fulltbl_both <- fulltbl_onsets %>%
+  filter(difference == "Both")
+
+plot_bias <- fulltbl_both %>%
+  ggplot(aes(x = trials, y = Bias, colour = interaction(test, onset_method, sep = " "))) +
+  geom_point(size = 2) +
+  scale_colour_viridis_d(end = 0.8, guide = "none") +
+  labs(x = "Sample size", y = "Bias (ms)", colour = "Test and onset detection method") +
+  geom_line()  +
+  scale_x_continuous(breaks = seq(10, 100, 10))
+
+plot_MAE <- fulltbl_both %>%
+  ggplot(aes(x = trials, y = MAE, colour = interaction(test, onset_method, sep = " "))) +
+  geom_point(size = 2) +
+  scale_colour_viridis_d(end = 0.8) +
+  labs(x = "Sample size", y = "MAE (ms)", colour = "Test and onset detection method") +
+  theme(legend.position = c(.65, .8)) +
+  geom_line()  +
+  scale_x_continuous(breaks = seq(10, 100, 10))
+
+plot_variance <- fulltbl_both %>%
+  ggplot(aes(x = trials, y = Variance, colour = interaction(test, onset_method, sep = " "))) +
+  geom_point(size = 2) +
+  scale_colour_viridis_d(end = 0.8, guide = "none") +
+  labs(x = "Sample size", y = "Variance (ms^2)", colour = "Test and onset detection method") +
+  geom_line()  +
+  scale_x_continuous(breaks = seq(10, 100, 10))
+
+plot_early <- fulltbl_both %>%
+  ggplot(aes(x = trials, y = EarlyProportion, colour = interaction(test, onset_method, sep = " "))) +
+  geom_point(size = 2) +
+  scale_colour_viridis_d(end = 0.8, guide = "none") +
+  labs(x = "Sample size", y = "Proportion too early", colour = "Test and onset detection method") +
+  geom_line() +
+  scale_x_continuous(breaks = seq(10, 100, 10))
+
+plot_grid(plot_bias, plot_MAE, plot_variance, plot_early)
+
+ggsave("plots/both_onsetmeasures.png")
+
+
+```
+
+## Significant timepoint recovery comparison
+
+```{r}
+df_max <- rbind(df_max_amp, df_max_lat, df_max_amplat) %>%
+  filter(trials == "V10")
+
+df_uni <- rbind(df_uni_amp, df_uni_lat, df_uni_amplat) %>%
+  filter(trials == "V10")
+
+df_uni <- df_uni %>%
+  filter(timepoint != 0 | method != "manova")
+  
+totaltp_max <- rbind(totaltp_max_amp, totaltp_max_lat, totaltp_max_amplat)
+totaltp_uni <- rbind(totaltp_uni_amp, totaltp_uni_lat, totaltp_uni_amplat)
+
+df_max$difference <- factor(df_max$difference, levels=unique(c("Amplitude", "Latency", "Both")))
+df_uni$difference <- factor(df_uni$difference, levels=unique(c("Amplitude", "Latency", "Both")))
+
+totaltp_max$difference <- factor(totaltp_max$difference, levels=unique(c("Amplitude", "Latency", "Both")))
+totaltp_uni$difference <- factor(totaltp_uni$difference, levels=unique(c("Amplitude", "Latency", "Both")))
+```
+
+```{r}
+
+sigtpmax <- ggplot(df_max, aes(x = timepoint, y = value, colour = method)) + theme_gar +
+  geom_line(alpha = 0.75) +
+  scale_x_continuous(breaks = seq(0, 500, 100)) +
+  # using a colourblind friendly scale for accessibility
+  scale_colour_viridis_d(end = 0.7, guide = FALSE) +
+  labs(title = "Maximum threshold", y= "Proportion of tests exceeding max threshold", x = "Time in ms") +
+  # adding a horizontal line indicating the arbitrary alpha threshold to show false positives
+  geom_hline(yintercept = aath) +
+  geom_vline(xintercept = c(onset1, onset1+110)) +
+  facet_wrap(~difference, nrow = 3) +
+  theme(axis.text = element_text(size = 6),
+        axis.title = element_text(size = 10))
+
+
+sigtpuni <- ggplot(df_uni, aes(x = timepoint, y = value, colour = method)) + theme_gar +
+  geom_line(alpha = 0.75) +
+  scale_x_continuous(breaks = seq(0, 500, 100)) +
+  # using a colourblind friendly scale for accessibility
+  scale_colour_viridis_d(end = 0.7, guide = FALSE) +
+  labs(title = "Univariate threshold", y= "Proportion of tests exceeding univariate threshold", x = "Time in ms") +
+  # adding a horizontal line indicating the arbitrary alpha threshold to show false positives
+  geom_hline(yintercept = aath) +
+  geom_vline(xintercept = c(onset1, onset1+110)) +
+  facet_wrap(~difference, nrow = 3) +
+  theme(axis.text = element_text(size = 6),
+        axis.title = element_text(size = 10))
+
+plot_grid(sigtpmax, sigtpuni, nrow = 1, ncol = 2, label_size = 14)
+
+ggsave("plots/sigtp.png")
+
+```
+
+```{r}
+totaltpmax <- ggplot(totaltp_max, aes(x = trials, y = mediantp, colour = method)) +
+  geom_line() +
+  scale_colour_viridis_d(end = 0.7, guide = FALSE) +
+  facet_wrap(~difference, nrow = 3) +
+  labs(title = "Maximum threshold", y= "Median timepoints exceeding maximum threshold in timeseries", x = "Number of trials")  +
+  theme_gar +
+  theme(axis.text = element_text(size = 6),
+        axis.title = element_text(size = 10)) +
+  scale_y_continuous(limits = c(0, 70)) +
+  scale_x_continuous(breaks = seq(10, 100, 10))
+
+totaltpuni <- ggplot(totaltp_uni, aes(x = trials, y = mediantp, colour = method)) +
+  geom_line() +
+  scale_colour_viridis_d(end = 0.7, guide = FALSE) +
+  facet_wrap(~difference, nrow = 3) +
+  labs(title = "Univariate threshold", y= "Median timepoints exceeding univariate threshold in timeseries", x = "Number of trials") +
+  theme_gar +
+  theme(axis.text = element_text(size = 6),
+        axis.title = element_text(size = 10)) +
+  scale_y_continuous(limits = c(0, 70)) +
+  scale_x_continuous(breaks = seq(10, 100, 10))
+
+plot_grid(totaltpmax, totaltpuni, nrow = 1, ncol = 2, label_size = 14)
+
+ggsave("plots/totaltp.png")
+```
+
+## Signal to noise ratio comparison
+
+```{r}
+df_f <- select(as_tibble(signoiseF), 1:nsim) %>%
+  # adding a trials column
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "signoiseF")
+  
+df_t <- select(as_tibble(signoiseT), 1:nsim) %>%
+  # adding a trials column
+  mutate(trials = seq(10, Nt, 10)) %>%
+  pivot_longer(cols = 1:nsim, names_to = "perm", values_to = "signoiseT")
+
+df <- inner_join(df_t, df_f) %>%
+  group_by(trials, perm) %>%
+  # plots will be based on the difference between the two signal to noise ratios
+  summarise(signoisediff = signoiseT-signoiseF)
+
+signoiseamplat <- ggplot(df, aes(x = signoisediff, colour = as.factor(trials))) + theme_gar +
+  geom_density(alpha = 0.7) +
+  # using a colourblind friendly scale for accessibility
+  scale_colour_viridis_d() +
+  labs(title = "Difference in Signal-to-Noise ratio (SNR)", y = "Density", x = "T-test SNR - MANOVA SNR") +
+  scale_x_continuous(limits = c(-100, 100)) +
+  # adding a vertical line of the median difference
+  geom_vline(xintercept = median(df$signoisediff))
+
+
+print(signoiseamplat)
+```
